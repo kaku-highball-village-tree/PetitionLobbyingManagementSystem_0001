@@ -8,6 +8,7 @@ Cmdスクリプトを呼び出す。
 from __future__ import annotations
 
 from pathlib import Path
+import ctypes
 import subprocess
 import sys
 
@@ -18,6 +19,8 @@ import win32gui
 
 pszWINDOW_CLASS_NAME: str = "PetitionLobbyingManagementSystemDnDWindowClass"
 pszWINDOW_TITLE: str = "PetitionLobbyingManagementSystem DnD"
+INSTRUCTION_FONT_HEIGHT: int = -17
+INSTRUCTION_FONT_FACE: str = "Meiryo UI"
 
 
 def show_message_box(pszMessage: str, pszTitle: str = "完了") -> None:
@@ -32,26 +35,54 @@ def b_is_excel_file(pathFile: Path) -> bool:
     return pathFile.exists() and pathFile.suffix.lower() == ".xlsx"
 
 
-def draw_instruction_text(hWnd: int, hdc: int) -> None:
-    objRect = win32gui.GetClientRect(hWnd)
-    pszInstructionText: str = (
-        "相談データExcel(.xlsx)を\r\n"
-        "このウインドウへドラッグ＆ドロップしてください。\r\n\r\n"
-        "同じフォルダに\r\n"
-        "TSVフォルダ\r\n"
-        "Textフォルダ\r\n"
-        "を作成します。\r\n\r\n"
-        "エラー発生時は\r\n"
-        "_error.txt を出力します。"
-    )
-    win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
-    win32gui.DrawText(
-        hdc,
-        pszInstructionText,
-        -1,
-        objRect,
-        win32con.DT_LEFT | win32con.DT_TOP | win32con.DT_WORDBREAK,
-    )
+def draw_instruction_text(hWnd: int) -> None:
+    hdc, objPaintStruct = win32gui.BeginPaint(hWnd)
+    try:
+        hFont = ctypes.windll.gdi32.CreateFontW(
+            INSTRUCTION_FONT_HEIGHT,
+            0,
+            0,
+            0,
+            win32con.FW_NORMAL,
+            0,
+            0,
+            0,
+            win32con.SHIFTJIS_CHARSET,
+            win32con.OUT_DEFAULT_PRECIS,
+            win32con.CLIP_DEFAULT_PRECIS,
+            win32con.CLEARTYPE_QUALITY,
+            win32con.DEFAULT_PITCH | win32con.FF_DONTCARE,
+            INSTRUCTION_FONT_FACE,
+        )
+
+        iOldFontHandle = win32gui.SelectObject(hdc, hFont)
+        try:
+            iMargin: int = 5
+            iLeft, iTop, iRight, iBottom = win32gui.GetClientRect(hWnd)
+            objRect = (iLeft + iMargin, iTop + iMargin, iRight - iMargin, iBottom - iMargin)
+            pszInstructionText: str = (
+                "相談データExcel(.xlsx)を\r\n"
+                "このウインドウへドラッグ＆ドロップしてください。\r\n\r\n"
+                "同じフォルダに\r\n"
+                "TSVフォルダ\r\n"
+                "Textフォルダ\r\n"
+                "を作成します。\r\n\r\n"
+                "エラー発生時は\r\n"
+                "_error.txt を出力します。"
+            )
+            win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
+            win32gui.DrawText(
+                hdc,
+                pszInstructionText,
+                -1,
+                objRect,
+                win32con.DT_LEFT | win32con.DT_TOP | win32con.DT_WORDBREAK,
+            )
+        finally:
+            win32gui.SelectObject(hdc, iOldFontHandle)
+            ctypes.windll.gdi32.DeleteObject(hFont)
+    finally:
+        win32gui.EndPaint(hWnd, objPaintStruct)
 
 
 def run_cmd_script(pathExcelFile: Path) -> int:
@@ -119,11 +150,7 @@ def window_proc(hWnd: int, msg: int, wParam: int, lParam: int) -> int:
         return 0
 
     if msg == win32con.WM_PAINT:
-        hdc, objPaintStruct = win32gui.BeginPaint(hWnd)
-        try:
-            draw_instruction_text(hWnd, hdc)
-        finally:
-            win32gui.EndPaint(hWnd, objPaintStruct)
+        draw_instruction_text(hWnd)
         return 0
 
     if msg == win32con.WM_DESTROY:
