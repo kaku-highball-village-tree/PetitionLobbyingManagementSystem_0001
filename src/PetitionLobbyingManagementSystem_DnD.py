@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """PetitionLobbyingManagementSystem_DnD.py
 
-Drag & Drop で受け取った Excel ファイルを Cmd 側へ渡す。
+WindowsネイティブDnDウインドウでExcel(.xlsx)を受け取り、
+Cmdスクリプトを呼び出す。
 """
 
 from __future__ import annotations
@@ -9,45 +10,56 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import sys
-import tkinter as tk
-from tkinter import messagebox
+
+import win32api
+import win32con
+import win32gui
 
 
-def v_show_info(pszTitle: str, pszMessage: str) -> None:
-    objRoot = tk.Tk()
-    objRoot.withdraw()
-    messagebox.showinfo(pszTitle, pszMessage)
-    objRoot.destroy()
+pszWINDOW_CLASS_NAME: str = "PetitionLobbyingManagementSystemDnDWindowClass"
+pszWINDOW_TITLE: str = "PetitionLobbyingManagementSystem DnD"
 
 
-def v_show_error(pszTitle: str, pszMessage: str) -> None:
-    objRoot = tk.Tk()
-    objRoot.withdraw()
-    messagebox.showerror(pszTitle, pszMessage)
-    objRoot.destroy()
+def show_message_box(pszMessage: str, pszTitle: str = "完了") -> None:
+    win32gui.MessageBox(0, pszMessage, pszTitle, win32con.MB_OK | win32con.MB_ICONINFORMATION)
 
 
-def b_is_valid_excel_file(pathExcelFile: Path) -> bool:
-    return pathExcelFile.exists() and pathExcelFile.suffix.lower() == ".xlsx"
+def show_error_message_box(pszMessage: str, pszTitle: str = "エラー") -> None:
+    win32gui.MessageBox(0, pszMessage, pszTitle, win32con.MB_OK | win32con.MB_ICONERROR)
 
 
-def psz_merge_process_output(objResult: subprocess.CompletedProcess[str]) -> str:
-    pszCombinedOutput = (objResult.stdout or "")
-    if objResult.stderr:
-        pszCombinedOutput += "\n" + objResult.stderr
-    return pszCombinedOutput.strip()
+def b_is_excel_file(pathFile: Path) -> bool:
+    return pathFile.exists() and pathFile.suffix.lower() == ".xlsx"
 
 
-def i_run_cmd_with_excel_file(pathExcelFile: Path) -> int:
-    if not b_is_valid_excel_file(pathExcelFile):
-        v_show_error("入力エラー", f"xlsxファイルを指定してください。\n\n{pathExcelFile}")
-        return 1
+def draw_instruction_text(hWnd: int, hdc: int) -> None:
+    objRect = win32gui.GetClientRect(hWnd)
+    pszInstructionText: str = (
+        "相談データExcel(.xlsx)を\r\n"
+        "このウインドウへドラッグ＆ドロップしてください。\r\n\r\n"
+        "同じフォルダに\r\n"
+        "TSVフォルダ\r\n"
+        "Textフォルダ\r\n"
+        "を作成します。\r\n\r\n"
+        "エラー発生時は\r\n"
+        "_error.txt を出力します。"
+    )
+    win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
+    win32gui.DrawText(
+        hdc,
+        pszInstructionText,
+        -1,
+        objRect,
+        win32con.DT_LEFT | win32con.DT_TOP | win32con.DT_WORDBREAK,
+    )
 
-    pathCurrentDirectory = Path(__file__).resolve().parent
-    pathCmdScript = pathCurrentDirectory / "PetitionLobbyingManagementSystem_Cmd.py"
+
+def run_cmd_script(pathExcelFile: Path) -> int:
+    pathCurrentDirectory: Path = Path(__file__).resolve().parent
+    pathCmdScript: Path = pathCurrentDirectory / "PetitionLobbyingManagementSystem_Cmd.py"
 
     if not pathCmdScript.exists():
-        v_show_error("起動エラー", f"Cmdスクリプトが見つかりません。\n\n{pathCmdScript}")
+        show_error_message_box(f"Cmdスクリプトが見つかりません。\n\n{pathCmdScript}", "起動エラー")
         return 1
 
     try:
@@ -59,109 +71,143 @@ def i_run_cmd_with_excel_file(pathExcelFile: Path) -> int:
             check=False,
         )
     except Exception as objException:
-        v_show_error("実行エラー", f"Cmd呼び出しに失敗しました。\n\n{objException}")
+        show_error_message_box(f"Cmd呼び出しに失敗しました。\n\n{objException}", "実行エラー")
         return 1
 
-    pszCombinedOutput = psz_merge_process_output(objResult)
+    pszOutput: str = (objResult.stdout or "").strip()
+    pszErrorOutput: str = (objResult.stderr or "").strip()
+    if pszErrorOutput:
+        if pszOutput:
+            pszOutput = f"{pszOutput}\n{pszErrorOutput}"
+        else:
+            pszOutput = pszErrorOutput
 
     if objResult.returncode == 0:
-        v_show_info("完了", f"TSV/TXT生成が完了しました。\n\n{pszCombinedOutput}")
+        show_message_box(f"TSV/TXT生成が完了しました。\n\n{pszOutput}", "完了")
         return 0
 
-    v_show_error("変換エラー", f"TSV/TXT生成でエラーが発生しました。\n\n{pszCombinedOutput}")
+    show_error_message_box(f"TSV/TXT生成でエラーが発生しました。\n\n{pszOutput}", "変換エラー")
     return 1
 
 
-def list_parse_dnd_paths(pszDropData: str) -> list[Path]:
-    listParsedPaths: list[Path] = []
-    pszWorkingText = pszDropData.strip()
+def handle_drop_files(hDrop: int) -> None:
+    iFileCount: int = win32api.DragQueryFile(hDrop, -1)
 
-    while pszWorkingText:
-        if pszWorkingText.startswith("{"):
-            iClosingIndex = pszWorkingText.find("}")
-            if iClosingIndex == -1:
-                break
-            pszToken = pszWorkingText[1:iClosingIndex]
-            pszWorkingText = pszWorkingText[iClosingIndex + 1 :].lstrip()
-        else:
-            listTokens = pszWorkingText.split(maxsplit=1)
-            pszToken = listTokens[0]
-            pszWorkingText = listTokens[1] if len(listTokens) > 1 else ""
+    if iFileCount != 1:
+        show_error_message_box("ドラッグ＆ドロップできるファイルは1件のみです。", "入力エラー")
+        win32api.DragFinish(hDrop)
+        return
 
-        if pszToken:
-            listParsedPaths.append(Path(pszToken).expanduser().resolve())
+    pszDroppedFilePath: str = win32api.DragQueryFile(hDrop, 0)
+    win32api.DragFinish(hDrop)
 
-    return listParsedPaths
+    pathExcelFile: Path = Path(pszDroppedFilePath).expanduser().resolve()
+    if not b_is_excel_file(pathExcelFile):
+        show_error_message_box(f".xlsx ファイルのみ受け付けます。\n\n{pathExcelFile}", "入力エラー")
+        return
+
+    run_cmd_script(pathExcelFile)
+
+
+def window_proc(hWnd: int, msg: int, wParam: int, lParam: int) -> int:
+    if msg == win32con.WM_CREATE:
+        win32gui.DragAcceptFiles(hWnd, True)
+        return 0
+
+    if msg == win32con.WM_DROPFILES:
+        handle_drop_files(wParam)
+        return 0
+
+    if msg == win32con.WM_PAINT:
+        hdc, objPaintStruct = win32gui.BeginPaint(hWnd)
+        try:
+            draw_instruction_text(hWnd, hdc)
+        finally:
+            win32gui.EndPaint(hWnd, objPaintStruct)
+        return 0
+
+    if msg == win32con.WM_DESTROY:
+        win32gui.PostQuitMessage(0)
+        return 0
+
+    return win32gui.DefWindowProc(hWnd, msg, wParam, lParam)
+
+
+def register_window_class(hInstance: int) -> int:
+    objWindowClass = win32gui.WNDCLASS()
+    objWindowClass.hInstance = hInstance
+    objWindowClass.lpszClassName = pszWINDOW_CLASS_NAME
+    objWindowClass.lpfnWndProc = window_proc
+    objWindowClass.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
+    objWindowClass.hbrBackground = win32con.COLOR_WINDOW + 1
+    return win32gui.RegisterClass(objWindowClass)
+
+
+def create_main_window(hInstance: int) -> int:
+    iWindowHeight: int = 260
+    iWindowWidth: int = int(iWindowHeight * 1.618)
+
+    return win32gui.CreateWindowEx(
+        win32con.WS_EX_ACCEPTFILES,
+        pszWINDOW_CLASS_NAME,
+        pszWINDOW_TITLE,
+        win32con.WS_OVERLAPPED | win32con.WS_CAPTION | win32con.WS_SYSMENU | win32con.WS_MINIMIZEBOX,
+        win32con.CW_USEDEFAULT,
+        win32con.CW_USEDEFAULT,
+        iWindowWidth,
+        iWindowHeight,
+        0,
+        0,
+        hInstance,
+        None,
+    )
 
 
 def i_main() -> int:
-    if len(sys.argv) >= 2:
-        pathExcelFile = Path(sys.argv[1]).expanduser().resolve()
-        return i_run_cmd_with_excel_file(pathExcelFile)
-
-    objRoot = tk.Tk()
-    objRoot.title("PetitionLobbyingManagementSystem DnD")
-    objRoot.geometry("600x240")
-
-    objLabelGuide = tk.Label(
-        objRoot,
-        text="このウインドウへ Excel(.xlsx) をドラッグ＆ドロップしてください",
-        padx=12,
-        pady=12,
-    )
-    objLabelGuide.pack(fill="x")
-
-    objLabelDropArea = tk.Label(
-        objRoot,
-        text="Drop Here",
-        relief="groove",
-        borderwidth=2,
-        height=6,
-    )
-    objLabelDropArea.pack(fill="both", expand=True, padx=16, pady=12)
-
-    objLabelStatus = tk.Label(objRoot, text="待機中", anchor="w", padx=12)
-    objLabelStatus.pack(fill="x", pady=(0, 8))
-
-    def v_handle_drop_event(objEvent: tk.Event[tk.Misc]) -> None:
-        pszDropData = str(objEvent.data)
-        listDroppedPaths = list_parse_dnd_paths(pszDropData)
-        if not listDroppedPaths:
-            objLabelStatus.config(text="ドロップされたファイルを認識できませんでした")
-            return
-
-        pathExcelFile = listDroppedPaths[0]
-        objLabelStatus.config(text=f"処理中: {pathExcelFile}")
-        iReturnCode = i_run_cmd_with_excel_file(pathExcelFile)
-        if iReturnCode == 0:
-            objLabelStatus.config(text=f"完了: {pathExcelFile}")
-        else:
-            objLabelStatus.config(text=f"失敗: {pathExcelFile}")
-
-    bDropEnabled = False
     try:
-        objRoot.tk.call("package", "require", "tkdnd")
-        objRoot.tk.call("tkdnd::drop_target", "register", str(objLabelDropArea), "DND_Files")
-        objRoot.tk.call("bind", str(objLabelDropArea), "<<Drop>>", "{%d}")
-    except Exception:
-        pass
+        hInstance: int = win32api.GetModuleHandle(None)
+    except Exception as objException:
+        show_error_message_box(f"モジュールハンドル取得に失敗しました。\n\n{objException}", "起動エラー")
+        return 1
 
     try:
-        objLabelDropArea.drop_target_register("DND_Files")
-        objLabelDropArea.dnd_bind("<<Drop>>", v_handle_drop_event)
-        bDropEnabled = True
-    except Exception:
-        try:
-            objRoot.drop_target_register("DND_Files")
-            objRoot.dnd_bind("<<Drop>>", v_handle_drop_event)
-            bDropEnabled = True
-        except Exception:
-            bDropEnabled = False
+        register_window_class(hInstance)
+    except Exception as objException:
+        show_error_message_box(f"ウインドウクラス登録に失敗しました。\n\n{objException}", "起動エラー")
+        return 1
 
-    if not bDropEnabled:
-        objLabelStatus.config(text="DnD機能を初期化できませんでした。ファイルをこのpyへ直接ドロップしてください。")
+    try:
+        hWnd: int = create_main_window(hInstance)
+    except Exception as objException:
+        show_error_message_box(f"ウインドウ作成に失敗しました。\n\n{objException}", "起動エラー")
+        return 1
 
-    objRoot.mainloop()
+    if not hWnd:
+        show_error_message_box("ウインドウ作成に失敗しました。", "起動エラー")
+        return 1
+
+    try:
+        win32gui.SetWindowPos(
+            hWnd,
+            win32con.HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE,
+        )
+        win32gui.ShowWindow(hWnd, win32con.SW_SHOW)
+        win32gui.UpdateWindow(hWnd)
+    except Exception as objException:
+        show_error_message_box(f"ウインドウ表示に失敗しました。\n\n{objException}", "起動エラー")
+        return 1
+
+    try:
+        win32gui.PumpMessages()
+    except Exception as objException:
+        show_error_message_box(f"メッセージループでエラーが発生しました。\n\n{objException}", "実行エラー")
+        return 1
+
     return 0
 
 
