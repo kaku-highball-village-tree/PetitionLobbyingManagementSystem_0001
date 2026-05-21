@@ -171,8 +171,10 @@ def register_window_class(hInstance: int) -> int:
 
 
 def create_main_window(hInstance: int) -> int:
-    iWindowHeight: int = 260
-    iWindowWidth: int = int(iWindowHeight * 1.618)
+    iDesktopWidth: int = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+    iDesktopHeight: int = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+    iWindowWidth: int = int(iDesktopWidth * 0.5)
+    iWindowHeight: int = int(iDesktopHeight * 0.5)
 
     return win32gui.CreateWindowEx(
         win32con.WS_EX_ACCEPTFILES,
