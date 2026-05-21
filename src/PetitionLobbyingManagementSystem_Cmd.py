@@ -47,6 +47,19 @@ def psz_sanitize_file_name(pszSourceText: str) -> str:
     return pszReplacedText.strip()
 
 
+def psz_format_management_number(pszManagementNumberText: str) -> str:
+    pszStrippedText = pszManagementNumberText.strip()
+    if pszStrippedText == "":
+        return ""
+
+    try:
+        iManagementNumber = int(float(pszStrippedText))
+    except Exception:
+        return pszStrippedText
+
+    return f"{iManagementNumber:06d}"
+
+
 def b_is_blank_row(listRowValues: list[str]) -> bool:
     if not listRowValues:
         return True
@@ -111,6 +124,7 @@ def i_main() -> int:
             iSkippedCount += 1
             continue
 
+        listRowValues[0] = psz_format_management_number(listRowValues[0])
         listTsvLines.append("\t".join(listRowValues))
 
         pszManagementNumber = psz_sanitize_file_name(listRowValues[0])
