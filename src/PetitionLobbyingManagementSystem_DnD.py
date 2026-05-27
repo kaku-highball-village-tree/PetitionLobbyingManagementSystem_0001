@@ -35,6 +35,10 @@ def b_is_excel_file(pathFile: Path) -> bool:
     return pathFile.exists() and pathFile.suffix.lower() == ".xlsx"
 
 
+def b_is_image_file(pathFile: Path) -> bool:
+    return pathFile.exists() and pathFile.suffix.lower() in {".jpg", ".jpeg", ".png"}
+
+
 def draw_instruction_text(hWnd: int) -> None:
     hdc, objPaintStruct = win32gui.BeginPaint(hWnd)
     try:
@@ -61,14 +65,13 @@ def draw_instruction_text(hWnd: int) -> None:
             iLeft, iTop, iRight, iBottom = win32gui.GetClientRect(hWnd)
             objRect = (iLeft + iMargin, iTop + iMargin, iRight - iMargin, iBottom - iMargin)
             pszInstructionText: str = (
-                "相談データExcel(.xlsx)を\r\n"
+                "相談データExcel(.xlsx) または 相談メモ画像(.jpg/.jpeg/.png) を\r\n"
                 "このウインドウへドラッグ＆ドロップしてください。\r\n\r\n"
-                "同じフォルダに\r\n"
-                "TSVフォルダ\r\n"
-                "Textフォルダ\r\n"
-                "を作成します。\r\n\r\n"
-                "エラー発生時は\r\n"
-                "_error.txt を出力します。"
+                "Excelの場合:\r\n"
+                "TSV/TXTを生成します。\r\n\r\n"
+                "画像の場合:\r\n"
+                "ChatGPTで画像内容を読み取り、\r\n"
+                "同じフォルダーにテキストファイル(.txt)を作成します。"
             )
             win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
             win32gui.DrawText(
@@ -85,9 +88,9 @@ def draw_instruction_text(hWnd: int) -> None:
         win32gui.EndPaint(hWnd, objPaintStruct)
 
 
-def run_cmd_script(pathExcelFile: Path) -> int:
+def run_cmd_script(pathInputFile: Path, pszCmdScriptName: str, pszSuccessMessage: str, pszErrorMessage: str) -> int:
     pathCurrentDirectory: Path = Path(__file__).resolve().parent
-    pathCmdScript: Path = pathCurrentDirectory / "PetitionLobbyingManagementSystem_Cmd.py"
+    pathCmdScript: Path = pathCurrentDirectory / pszCmdScriptName
 
     if not pathCmdScript.exists():
         show_error_message_box(f"Cmdスクリプトが見つかりません。\n\n{pathCmdScript}", "起動エラー")
@@ -95,8 +98,8 @@ def run_cmd_script(pathExcelFile: Path) -> int:
 
     try:
         objResult = subprocess.run(
-            [sys.executable, str(pathCmdScript), str(pathExcelFile)],
-            cwd=str(pathExcelFile.parent),
+            [sys.executable, str(pathCmdScript), str(pathInputFile)],
+            cwd=str(pathInputFile.parent),
             capture_output=True,
             text=True,
             check=False,
@@ -114,10 +117,10 @@ def run_cmd_script(pathExcelFile: Path) -> int:
             pszOutput = pszErrorOutput
 
     if objResult.returncode == 0:
-        show_message_box(f"TSV/TXT生成が完了しました。\n\n{pszOutput}", "完了")
+        show_message_box(f"{pszSuccessMessage}\n\n{pszOutput}", "完了")
         return 0
 
-    show_error_message_box(f"TSV/TXT生成でエラーが発生しました。\n\n{pszOutput}", "変換エラー")
+    show_error_message_box(f"{pszErrorMessage}\n\n{pszOutput}", "変換エラー")
     return 1
 
 
@@ -132,12 +135,30 @@ def handle_drop_files(hDrop: int) -> None:
     pszDroppedFilePath: str = win32api.DragQueryFile(hDrop, 0)
     win32api.DragFinish(hDrop)
 
-    pathExcelFile: Path = Path(pszDroppedFilePath).expanduser().resolve()
-    if not b_is_excel_file(pathExcelFile):
-        show_error_message_box(f".xlsx ファイルのみ受け付けます。\n\n{pathExcelFile}", "入力エラー")
+    pathInputFile: Path = Path(pszDroppedFilePath).expanduser().resolve()
+
+    if b_is_excel_file(pathInputFile):
+        run_cmd_script(
+            pathInputFile,
+            "PetitionLobbyingManagementSystem_Cmd.py",
+            "TSV/TXT生成が完了しました。",
+            "TSV/TXT生成でエラーが発生しました。",
+        )
         return
 
-    run_cmd_script(pathExcelFile)
+    if b_is_image_file(pathInputFile):
+        run_cmd_script(
+            pathInputFile,
+            "PetitionLobbyingImageToTextfile_Cmd.py",
+            "画像テキスト化が完了しました。",
+            "画像テキスト化でエラーが発生しました。",
+        )
+        return
+
+    show_error_message_box(
+        f".xlsx / .jpg / .jpeg / .png ファイルのみ受け付けます。\n\n{pathInputFile}",
+        "入力エラー",
+    )
 
 
 def window_proc(hWnd: int, msg: int, wParam: int, lParam: int) -> int:
